@@ -1,7 +1,7 @@
 // sw.js - Service Worker for TUBA Mobile App
-const CACHE_NAME = 'tuba-mobile-v1.0';
-const STATIC_CACHE = 'tuba-static-v1.2';
-const DYNAMIC_CACHE = 'tuba-dynamic-v1.2';
+const CACHE_NAME = 'tuba-mobile-v1.2';
+const STATIC_CACHE = 'tuba-static-v1.4';
+const DYNAMIC_CACHE = 'tuba-dynamic-v1.4';
 // Ensure paths work under subdirectories (e.g., GitHub Pages project sites)
 const BASE_PATH = new URL(self.registration.scope).pathname; // e.g. '/repo/'
 
@@ -56,9 +56,13 @@ self.addEventListener('activate', event => {
           }
         })
       );
-    }).then(() => {
+    }).then(async () => {
       console.log('[SW] Service worker activated');
-      return self.clients.claim();
+      await self.clients.claim();
+      const clientsList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      clientsList.forEach(client => {
+        client.postMessage({ type: 'sw-updated' });
+      });
     })
   );
 });
@@ -69,9 +73,9 @@ self.addEventListener('fetch', event => {
   const url = new URL(request.url);
 
   // Only handle GET requests for offline caching; let others pass through
-  if (request.method !== 'GET') {
-    return; // default behavior
-  }
+    if (request.method !== 'GET') {
+      return; // default behavior
+    }
 
   event.respondWith((async () => {
     // Always bypass caching for Supabase API requests to avoid stale data
@@ -85,19 +89,32 @@ self.addEventListener('fetch', event => {
         return new Response('', { status: 503, statusText: 'Offline' });
       }
     }
-    // App-shell navigation fallback
+    // App-shell navigation: Network First (always try latest), cache fallback
     if (request.mode === 'navigate' || request.headers.get('accept')?.includes('text/html')) {
       try {
-        const fresh = await fetch(request);
+        const fresh = await fetch(request, { cache: 'no-store' });
+        try {
+          const cache = await caches.open(STATIC_CACHE);
+          cache.put(BASE_PATH + 'index.html', fresh.clone());
+        } catch {}
         return fresh;
-      } catch {
-        // Try multiple fallbacks for iOS A2HS launch paths
+      } catch (error) {
+        // Fallback to cached shells if network fails
+        const cachedReq = await caches.match(request, { ignoreSearch: true });
+        if (cachedReq) return cachedReq;
         const shell1 = await caches.match(BASE_PATH + 'index.html');
         if (shell1) return shell1;
         const shell2 = await caches.match(BASE_PATH);
         if (shell2) return shell2;
         const shell3 = await caches.match('index.html');
         if (shell3) return shell3;
+        const shell4 = await caches.match('./index.html');
+        if (shell4) return shell4;
+        // Last resort offline
+        return new Response('<!DOCTYPE html><html><head><title>Offline</title><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="background:#111;color:#fff;font-family:sans-serif;text-align:center;padding:40px;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;"><h1>You are offline</h1><p>The app content is not fully cached yet.</p><button onclick="window.location.reload()" style="padding:12px 24px;background:#666;color:white;border:none;border-radius:8px;font-size:16px;margin-top:20px;cursor:pointer;">Retry Connection</button></body></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' }
+        });
       }
     }
 

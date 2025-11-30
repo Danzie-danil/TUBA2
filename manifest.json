@@ -46,5 +46,6 @@
       "purpose": "any maskable"
     }
   ],
-  "prefer_related_applications": false
+  "prefer_related_applications": false,
+  "capture_links": "existing_client_navigate"
 }
